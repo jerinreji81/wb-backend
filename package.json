@@ -1,0 +1,12 @@
+{
+  "name": "worshipbase-ug-backend",
+  "version": "68.4.1",
+  "description": "Small backend helper for WorshipBase Ultimate Guitar import.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
