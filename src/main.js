@@ -10,26 +10,43 @@ const REQUIRED_COLUMNS = [
   "BPM",
   "Spotify link",
   "Youtube link",
-  "Chart text",
+  "Chart Text",
   "Notes",
 ];
+
+const COLUMN_ALIASES = {
+  Title: ["Title"],
+  Artist: ["Artist"],
+  "Original Key": ["Original Key"],
+  Tags: ["Tags"],
+  "Time sig": ["Time sig", "Time Sig", "Time Signature"],
+  BPM: ["BPM", "Tempo"],
+  "Spotify link": ["Spotify link", "Spotify Link"],
+  "Youtube link": ["Youtube link", "YouTube link", "Youtube Link", "YouTube Link"],
+  "Chart Text": ["Chart Text", "Chart text"],
+  Notes: ["Notes"],
+};
 
 const app = document.querySelector("#app");
 
 const state = {
   fileName: "",
-  sheetName: "",
-  rows: [],
+  workbook: null,
+  sheets: [],
+  activeSheetName: "",
   selectedIndex: -1,
   query: "",
   issuesOnly: false,
   error: "",
 };
 
-function render() {
-  const selectedSong = state.rows[state.selectedIndex] ?? null;
-  const visibleSongs = state.rows.filter((song) => {
-    const q = state.query.trim().toLowerCase();
+function getActiveSheet() {
+  return state.sheets.find((sheet) => sheet.name === state.activeSheetName) ?? null;
+}
+
+function getVisibleSongs(rows) {
+  const q = state.query.trim().toLowerCase();
+  return rows.filter((song) => {
     const haystack = [
       song.title,
       song.artist,
@@ -43,48 +60,165 @@ function render() {
     const matchesQuery = !q || haystack.includes(q);
     return matchesQuery && (!state.issuesOnly || song.issues.length > 0);
   });
+}
 
-  if (!selectedSong && visibleSongs.length > 0) {
-    state.selectedIndex = state.rows.indexOf(visibleSongs[0]);
+function render() {
+  const activeSheet = getActiveSheet();
+  const rows = activeSheet?.rows ?? [];
+  const visibleSongs = getVisibleSongs(rows);
+
+  if (rows.length === 0) {
+    state.selectedIndex = -1;
+  } else if (!rows[state.selectedIndex] || !visibleSongs.includes(rows[state.selectedIndex])) {
+    state.selectedIndex = rows.indexOf(visibleSongs[0] ?? rows[0]);
   }
 
+  const selectedSong = rows[state.selectedIndex] ?? null;
+
   app.innerHTML = `
-    <div class="shell">
-      <aside class="sidebar">
-        <div class="sidebar-header">
+    <div class="app-shell">
+      <div class="workspace-column">
+        <section class="surface-card load-card">
           <div>
             <p class="eyebrow">WB Library Builder</p>
             <h1>Excel Preview Tool</h1>
-            <p class="muted">Load your worship library sheet and preview songs the way they will read in the app.</p>
+            <p class="muted">Load your workbook, choose a sheet, and preview exactly how the chart reads before it ever reaches the app.</p>
           </div>
           <label class="upload-card">
             <input id="file-input" type="file" accept=".xlsx,.xls,.csv" hidden />
             <span class="upload-title">${state.fileName ? "Replace workbook" : "Load workbook"}</span>
             <span class="upload-subtitle">${state.fileName || "Excel (.xlsx, .xls) or CSV"}</span>
           </label>
-        </div>
+        </section>
 
-        <section class="summary-card">
-          <div class="summary-row">
-            <span>Workbook</span>
-            <strong>${state.fileName || "Nothing loaded"}</strong>
+        <section class="surface-card info-card">
+          <div class="section-head">
+            <h2>Workbook Info</h2>
           </div>
-          <div class="summary-row">
-            <span>Sheet</span>
-            <strong>${state.sheetName || "—"}</strong>
+          <div class="info-grid">
+            <div class="info-item">
+              <span>Workbook</span>
+              <strong>${state.fileName || "Nothing loaded"}</strong>
+            </div>
+            <div class="info-item">
+              <span>Selected tab</span>
+              <strong>${activeSheet?.name || "—"}</strong>
+            </div>
+            <div class="info-item">
+              <span>Tabs found</span>
+              <strong>${state.sheets.length}</strong>
+            </div>
+            <div class="info-item">
+              <span>Songs in tab</span>
+              <strong>${rows.length}</strong>
+            </div>
+            <div class="info-item">
+              <span>Showing</span>
+              <strong>${visibleSongs.length}</strong>
+            </div>
+            <div class="info-item">
+              <span>With issues</span>
+              <strong>${rows.filter((row) => row.issues.length > 0).length}</strong>
+            </div>
           </div>
-          <div class="summary-row">
-            <span>Songs</span>
-            <strong>${state.rows.length}</strong>
-          </div>
-          <div class="summary-row">
-            <span>With issues</span>
-            <strong>${state.rows.filter((row) => row.issues.length > 0).length}</strong>
+
+          ${
+            state.sheets.length
+              ? `
+                <div class="sheet-tabs" role="tablist" aria-label="Workbook tabs">
+                  ${state.sheets
+                    .map(
+                      (sheet) => `
+                        <button class="sheet-tab ${sheet.name === state.activeSheetName ? "is-active" : ""}" data-sheet-name="${escapeAttribute(sheet.name)}">
+                          ${escapeHtml(sheet.name)}
+                          <span>${sheet.rows.length}</span>
+                        </button>
+                      `,
+                    )
+                    .join("")}
+                </div>
+              `
+              : ""
+          }
+        </section>
+
+        <section class="surface-card search-card">
+          <div class="search-row">
+            <input id="search-input" class="search-input" type="search" placeholder="Search title, artist, key, tags…" value="${escapeAttribute(state.query)}" />
+            <label class="toggle-wrap">
+              <input id="issues-toggle" type="checkbox" ${state.issuesOnly ? "checked" : ""} />
+              <span>Issues only</span>
+            </label>
           </div>
         </section>
 
-        <section class="columns-card">
-          <div class="section-title-row">
+        <section class="surface-card list-card">
+          <div class="section-head">
+            <div>
+              <h2>Song List</h2>
+              <p>${visibleSongs.length} songs${activeSheet ? ` in ${escapeHtml(activeSheet.name)}` : ""}</p>
+            </div>
+          </div>
+
+          <div class="song-list-scroll">
+            ${
+              visibleSongs.length === 0
+                ? `<div class="empty-state">${state.fileName ? "No songs match this tab/filter yet." : "Load a workbook to start previewing songs."}</div>`
+                : visibleSongs
+                    .map((song) => {
+                      const globalIndex = rows.indexOf(song);
+                      return `
+                        <button class="song-row ${globalIndex === state.selectedIndex ? "is-selected" : ""}" data-song-index="${globalIndex}">
+                          <div class="song-row-main">
+                            <strong>${escapeHtml(song.title || "Untitled song")}</strong>
+                            <span>${escapeHtml(song.artist || "No artist")}</span>
+                          </div>
+                          <div class="song-row-side">
+                            <span>${escapeHtml(song.originalKey || "—")}</span>
+                            ${song.issues.length ? `<em>${song.issues.length}</em>` : ""}
+                          </div>
+                        </button>
+                      `;
+                    })
+                    .join("")
+            }
+          </div>
+        </section>
+
+        <section class="surface-card preview-card">
+          <div class="section-head">
+            <div>
+              <h2>Chart Preview</h2>
+              <p>${selectedSong ? escapeHtml(selectedSong.title || "Untitled song") : "Choose a song to preview it here."}</p>
+            </div>
+            ${
+              selectedSong
+                ? `<span class="preview-count">${parseChart(selectedSong.chartText).filter((b) => b.type !== "spacer").length} blocks</span>`
+                : ""
+            }
+          </div>
+          ${
+            selectedSong
+              ? `<div class="chart-surface">${parseChart(selectedSong.chartText).map(renderBlock).join("")}</div>`
+              : `<div class="preview-empty">Chart preview will appear here once you choose a song.</div>`
+          }
+        </section>
+
+        <section class="surface-card details-card">
+          ${
+            selectedSong
+              ? renderDetails(selectedSong)
+              : `
+                <div class="section-head">
+                  <h2>Song Details</h2>
+                </div>
+                <div class="preview-empty">Selected song metadata, links, notes, and raw chart text will appear here.</div>
+              `
+          }
+        </section>
+
+        <section class="surface-card columns-card">
+          <div class="section-head">
             <h2>Expected Columns</h2>
           </div>
           <ul class="column-list">
@@ -94,151 +228,84 @@ function render() {
 
         ${
           state.error
-            ? `<section class="error-card"><strong>Import issue</strong><p>${escapeHtml(state.error)}</p></section>`
+            ? `<section class="surface-card error-card"><strong>Import issue</strong><p>${escapeHtml(state.error)}</p></section>`
             : ""
         }
-      </aside>
-
-      <main class="workspace">
-        <div class="toolbar">
-          <div class="search-wrap">
-            <input id="search-input" class="search-input" type="search" placeholder="Search title, artist, key, tags…" value="${escapeAttribute(state.query)}" />
-          </div>
-          <label class="toggle-wrap">
-            <input id="issues-toggle" type="checkbox" ${state.issuesOnly ? "checked" : ""} />
-            <span>Issues only</span>
-          </label>
-        </div>
-
-        <div class="content-grid">
-          <section class="song-list-panel">
-            <div class="panel-header">
-              <div>
-                <h2>Song list</h2>
-                <p>${visibleSongs.length} showing</p>
-              </div>
-            </div>
-            <div class="song-list">
-              ${
-                visibleSongs.length === 0
-                  ? `<div class="empty-state">Load a workbook to start previewing songs.</div>`
-                  : visibleSongs
-                      .map((song) => {
-                        const globalIndex = state.rows.indexOf(song);
-                        const issueBadge =
-                          song.issues.length > 0
-                            ? `<span class="issue-pill">${song.issues.length} ${song.issues.length === 1 ? "issue" : "issues"}</span>`
-                            : "";
-                        return `
-                          <button class="song-row ${globalIndex === state.selectedIndex ? "is-selected" : ""}" data-song-index="${globalIndex}">
-                            <div class="song-row-top">
-                              <strong>${escapeHtml(song.title || "Untitled song")}</strong>
-                              ${issueBadge}
-                            </div>
-                            <div class="song-row-meta">${escapeHtml(song.artist || "No artist")} · ${escapeHtml(song.originalKey || "No key")}</div>
-                            <div class="song-row-tags">${escapeHtml(song.tags || "No tags")}</div>
-                          </button>
-                        `;
-                      })
-                      .join("")
-              }
-            </div>
-          </section>
-
-          <section class="preview-panel">
-            ${
-              selectedSong
-                ? renderPreview(selectedSong)
-                : `<div class="preview-empty">Choose a song to preview it here.</div>`
-            }
-          </section>
-        </div>
-      </main>
+      </div>
     </div>
   `;
 
   wireEvents();
 }
 
-function renderPreview(song) {
-  const previewBlocks = parseChart(song.chartText);
-  const noteBlock = song.notes?.trim()
-    ? `
-      <section class="notes-card">
-        <div class="notes-header">
-          <h3>Notes</h3>
-        </div>
-        <p>${escapeHtml(song.notes).replace(/\n/g, "<br />")}</p>
-      </section>
-    `
-    : "";
-
-  const issues = song.issues.length
-    ? `
-      <section class="issues-card">
-        <div class="notes-header">
-          <h3>Validation notes</h3>
-        </div>
-        <ul>
-          ${song.issues.map((issue) => `<li>${escapeHtml(issue)}</li>`).join("")}
-        </ul>
-      </section>
-    `
-    : "";
+function renderDetails(song) {
+  const tags = song.tags
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
 
   return `
-    <div class="preview-shell">
-      <div class="preview-header">
-        <div>
-          <h2>${escapeHtml(song.title || "Untitled song")}</h2>
-          <p>${escapeHtml(song.artist || "Unknown artist")} · Key ${escapeHtml(song.originalKey || "—")}</p>
-        </div>
-        <div class="preview-metadata">
-          <span>${escapeHtml(song.timeSig || "No time sig")}</span>
-          <span>${escapeHtml(song.bpm || "No BPM")}</span>
-        </div>
+    <div class="section-head">
+      <div>
+        <h2>${escapeHtml(song.title || "Untitled song")}</h2>
+        <p>${escapeHtml(song.artist || "Unknown artist")}</p>
       </div>
-
-      <div class="meta-pill-row">
-        ${song.tags
-          .split(",")
-          .map((tag) => tag.trim())
-          .filter(Boolean)
-          .map((tag) => `<span class="meta-pill">${escapeHtml(tag)}</span>`)
-          .join("") || `<span class="meta-pill is-muted">No tags</span>`}
-      </div>
-
-      <div class="link-grid">
-        <div class="link-card">
-          <span>Spotify</span>
-          <strong>${song.spotifyLink ? "Added" : "Missing"}</strong>
-        </div>
-        <div class="link-card">
-          <span>YouTube</span>
-          <strong>${song.youtubeLink ? "Added" : "Missing"}</strong>
-        </div>
-      </div>
-
-      ${issues}
-      ${noteBlock}
-
-      <section class="chart-card">
-        <div class="notes-header">
-          <h3>Chart preview</h3>
-          <p>${previewBlocks.length} blocks</p>
-        </div>
-        <div class="chart-surface">
-          ${previewBlocks.map(renderBlock).join("")}
-        </div>
-      </section>
-
-      <section class="source-card">
-        <div class="notes-header">
-          <h3>Source text</h3>
-        </div>
-        <pre>${escapeHtml(song.chartText || "")}</pre>
-      </section>
     </div>
+
+    <div class="detail-grid">
+      <div class="detail-item"><span>Original Key</span><strong>${escapeHtml(song.originalKey || "—")}</strong></div>
+      <div class="detail-item"><span>Time Sig</span><strong>${escapeHtml(song.timeSig || "—")}</strong></div>
+      <div class="detail-item"><span>BPM</span><strong>${escapeHtml(song.bpm || "—")}</strong></div>
+      <div class="detail-item"><span>Spreadsheet Row</span><strong>${song.rowNumber}</strong></div>
+    </div>
+
+    <div class="meta-pill-row">
+      ${
+        tags.length
+          ? tags.map((tag) => `<span class="meta-pill">${escapeHtml(tag)}</span>`).join("")
+          : `<span class="meta-pill is-muted">No tags</span>`
+      }
+    </div>
+
+    <div class="link-grid">
+      <div class="link-card">
+        <span>Spotify link</span>
+        <strong>${song.spotifyLink ? "Added" : "Missing"}</strong>
+      </div>
+      <div class="link-card">
+        <span>YouTube link</span>
+        <strong>${song.youtubeLink ? "Added" : "Missing"}</strong>
+      </div>
+    </div>
+
+    ${
+      song.issues.length
+        ? `
+          <section class="notes-card">
+            <div class="notes-header"><h3>Validation Notes</h3></div>
+            <ul class="issue-list">
+              ${song.issues.map((issue) => `<li>${escapeHtml(issue)}</li>`).join("")}
+            </ul>
+          </section>
+        `
+        : ""
+    }
+
+    ${
+      song.notes?.trim()
+        ? `
+          <section class="notes-card">
+            <div class="notes-header"><h3>Notes</h3></div>
+            <p>${escapeHtml(song.notes).replace(/\n/g, "<br />")}</p>
+          </section>
+        `
+        : ""
+    }
+
+    <section class="source-card">
+      <div class="notes-header"><h3>Source Text</h3></div>
+      <pre>${escapeHtml(song.chartText || "")}</pre>
+    </section>
   `;
 }
 
@@ -265,6 +332,16 @@ function wireEvents() {
       render();
     });
   });
+
+  document.querySelectorAll("[data-sheet-name]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeSheetName = button.dataset.sheetName;
+      state.selectedIndex = -1;
+      state.query = "";
+      state.issuesOnly = false;
+      render();
+    });
+  });
 }
 
 async function loadWorkbook(file) {
@@ -274,20 +351,25 @@ async function loadWorkbook(file) {
   try {
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: "array" });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-
-    const rows = XLSX.utils.sheet_to_json(sheet, {
-      defval: "",
-      raw: false,
+    state.workbook = workbook;
+    state.sheets = workbook.SheetNames.map((sheetName) => {
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, {
+        defval: "",
+        raw: false,
+      });
+      return {
+        name: sheetName,
+        rows: rows.map((row, index) => normalizeSongRow(row, index)),
+      };
     });
-
-    state.sheetName = sheetName;
-    state.rows = rows.map((row, index) => normalizeSongRow(row, index));
-    state.selectedIndex = state.rows.length > 0 ? 0 : -1;
+    state.activeSheetName = state.sheets[0]?.name || "";
+    state.selectedIndex = state.sheets[0]?.rows.length ? 0 : -1;
   } catch (error) {
     state.error = error instanceof Error ? error.message : "Could not read workbook.";
-    state.rows = [];
+    state.workbook = null;
+    state.sheets = [];
+    state.activeSheetName = "";
     state.selectedIndex = -1;
   }
 
@@ -305,7 +387,7 @@ function normalizeSongRow(row, index) {
     bpm: valueFor(row, "BPM"),
     spotifyLink: valueFor(row, "Spotify link"),
     youtubeLink: valueFor(row, "Youtube link"),
-    chartText: valueFor(row, "Chart text"),
+    chartText: valueFor(row, "Chart Text"),
     notes: valueFor(row, "Notes"),
   };
 
@@ -314,7 +396,13 @@ function normalizeSongRow(row, index) {
 }
 
 function valueFor(row, key) {
-  return String(row[key] ?? "").trim();
+  const aliases = COLUMN_ALIASES[key] || [key];
+  for (const alias of aliases) {
+    if (row[alias] !== undefined && row[alias] !== null) {
+      return String(row[alias]).trim();
+    }
+  }
+  return "";
 }
 
 function validateSong(song) {
@@ -323,7 +411,7 @@ function validateSong(song) {
   if (!song.title) issues.push("Missing Title");
   if (!song.artist) issues.push("Missing Artist");
   if (!song.originalKey) issues.push("Missing Original Key");
-  if (!song.chartText) issues.push("Missing Chart text");
+  if (!song.chartText) issues.push("Missing Chart Text");
   if (!song.tags) issues.push("Missing Tags");
   if (song.bpm && Number.isNaN(Number(song.bpm))) issues.push("BPM should be a number");
   if (song.spotifyLink && !looksLikeUrl(song.spotifyLink)) issues.push("Spotify link does not look like a URL");
@@ -337,7 +425,8 @@ function looksLikeUrl(value) {
 }
 
 function parseChart(text) {
-  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const normalized = (text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalized.split("\n");
   const blocks = [];
   let index = 0;
 
@@ -358,9 +447,15 @@ function parseChart(text) {
     }
 
     const next = lines[index + 1] ?? "";
-    if (isChordLine(current) && next.trim()) {
+    if (isChordLine(current) && next.trim() && !isChordLine(next) && !/^\[[^\]]+\]$/.test(next.trim())) {
       blocks.push({ type: "pair", chord: current, lyric: next });
       index += 2;
+      continue;
+    }
+
+    if (looksInlineChorded(current)) {
+      blocks.push({ type: "inline", text: current });
+      index += 1;
       continue;
     }
 
@@ -377,9 +472,18 @@ function parseChart(text) {
 function isChordLine(line) {
   const trimmed = line.trim();
   if (!trimmed) return false;
-  if (trimmed.startsWith("[")) return false;
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return false;
   const tokens = trimmed.split(/\s+/);
-  return tokens.length > 0 && tokens.every((token) => /^[A-G](#|b)?(m|maj|min|sus|add|dim|aug|\/[A-G](#|b)?)?[0-9A-Za-z/#()\-+]*$/.test(token));
+  return (
+    tokens.length > 0 &&
+    tokens.every((token) =>
+      /^[A-G](#|b)?(m|maj|min|sus|add|dim|aug|\/[A-G](#|b)?)?[0-9A-Za-z/#()\-+]*$/.test(token),
+    )
+  );
+}
+
+function looksInlineChorded(line) {
+  return /\[[^\]]+\]/.test(line);
 }
 
 function renderBlock(block) {
@@ -393,6 +497,8 @@ function renderBlock(block) {
           <pre class="chart-line chart-lyrics">${escapeHtml(block.lyric)}</pre>
         </div>
       `;
+    case "inline":
+      return `<pre class="chart-line chart-inline">${renderInlineChords(block.text)}</pre>`;
     case "chordOnly":
       return `<pre class="chart-line chart-chords">${escapeHtml(block.text)}</pre>`;
     case "lyric":
@@ -402,6 +508,10 @@ function renderBlock(block) {
     default:
       return "";
   }
+}
+
+function renderInlineChords(text) {
+  return escapeHtml(text).replace(/\[([^\]]+)\]/g, '<span class="inline-chord">[$1]</span>');
 }
 
 function escapeHtml(value) {
